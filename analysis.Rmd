@@ -1,0 +1,327 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(tosr)
+library(bibliometrix)
+library(lubridate)
+```
+
+Getting data 
+
+```{r}
+wos <- bibliometrix::convert2df(c("data/polyphenols and cacao.txt",
+                                  "data/sugar or carbohydrate and cacao.txt",
+                                  "data/metabolomic OR peptid and cacao.txt"), 
+                                dbsource =  "wos", 
+                                format = "plaintext")
+
+scopus <- bibliometrix::convert2df(c("data/metabolomic or peptide and cacao.bib",
+                                     "data/polyphenol and cacao.bib",
+                                     "data/Sugar or carbohydrate and cacao.bib"), 
+                                   dbsource = "scopus", 
+                                   format = "bibtex")
+
+wos_scopus_tos <- tosr_load("data/polyphenols and cacao.txt",
+                            "data/sugar or carbohydrate and cacao.txt",
+                            "data/metabolomic OR peptid and cacao.txt", 
+                            "data/metabolomic or peptide and cacao.bib",
+                            "data/polyphenol and cacao.bib",
+                            "data/Sugar or carbohydrate and cacao.bib")
+```
+
+
+```{r}
+TC_wos <- 
+  wos |> 
+  select(PY, TC) |> 
+  group_by(PY) |> 
+  summarise(TC_sum = sum(TC)) |> 
+  arrange(desc(PY)) |> 
+  na.omit() 
+```
+
+Time Cited from WoS
+
+```{r}
+TC_scopus <- 
+  scopus |> 
+  select(PY, TC) |> 
+  group_by(PY) |> 
+  summarise(TC_sum = sum(TC)) |> 
+  arrange(desc(PY)) |> 
+  na.omit() 
+```
+
+# Figure 1 
+
+## Data
+
+```{r}
+wos_anual_production <- 
+  wos |> 
+  select(PY) |> 
+  count(PY, sort = TRUE) |> 
+  na.omit() |> 
+  filter(PY >= 2000,
+         PY < year(today())) |> 
+  mutate(ref_type = "wos") 
+
+scopus_anual_production  <- 
+  scopus |> 
+  select(PY) |> 
+  count(PY, sort = TRUE) |> 
+  na.omit() |> 
+  filter(PY >= 2000,
+         PY < year(today())) |>
+  mutate(ref_type = "scopus") 
+
+total_anual_production <- 
+  wos_scopus_tos$df |> 
+  select(PY) |> 
+  count(PY, sort = TRUE) |> 
+  na.omit() |> 
+  filter(PY >= 2000,
+         PY < year(today())) |>
+  mutate(ref_type = "total") |> 
+  arrange(desc(PY))
+
+wos_scopus_total_annual_production <- 
+  wos_anual_production |> 
+  bind_rows(scopus_anual_production,
+            total_anual_production) 
+
+# Checking results of total
+
+wos_scopus_total_annual_production_dummy <- 
+  total_anual_production |> 
+  rename(n_total = n,
+         ref_type_total = ref_type) |> 
+  left_join(wos_anual_production |> 
+              rename(n_wos = n,
+                     ref_type_wos = ref_type) ) |> 
+  left_join(scopus_anual_production |> 
+              rename(n_scopus = n,
+                     ref_type_scopus = ref_type)) |> 
+  mutate(total = if_else(n_total < n_wos | n_total < n_scopus, 
+                         n_scopus, # it could be improved
+                         n_total))
+
+wos_scopus_total_annual_production_total <- 
+  wos_scopus_total_annual_production_dummy |> 
+  select(PY, 
+         n = total,
+         ref_type = ref_type_total)
+
+wos_scopus_total_annual_production_scopus <- 
+  wos_scopus_total_annual_production_dummy |> 
+  select(PY, 
+         n = n_scopus,
+         ref_type = ref_type_scopus)
+
+wos_scopus_total_annual_production_wos <- 
+  wos_scopus_total_annual_production_dummy |> 
+  select(PY, 
+         n = n_wos,
+         ref_type = ref_type_wos)
+
+wos_scopus_total_annual_production <- 
+  wos_scopus_total_annual_production_total |> 
+  bind_rows(wos_scopus_total_annual_production_scopus,
+            wos_scopus_total_annual_production_wos) |> 
+  unique()
+
+figure_1_data <-
+  wos_scopus_total_annual_production |>
+  mutate(PY = replace_na(PY, replace = 0)) |>
+  pivot_wider(names_from = ref_type,
+              values_from = n) |>
+  arrange(desc(PY))
+
+wos_scopus_total_annual_production |>
+  ggplot(aes(x = PY, y = n, color = ref_type)) +
+  geom_line() +
+  labs(title = "Annual Scientific Production",
+       x = "years",
+       y = "papers") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+figure_1a <- 
+  wos_scopus_total_annual_production |> 
+  filter(ref_type != "total") |> 
+  ggplot(aes(x = factor(PY), 
+             y = n, 
+             fill = ref_type)) +
+  geom_bar(stat = "identity", 
+           position = "dodge") +
+  geom_text(aes(label = n),
+            vjust = -0.3,
+            position = position_dodge(0.9),
+            size = 3,
+            family = "Times") +
+  scale_fill_manual(values = c("springgreen3",
+                               "orange3")) +
+  theme(text = element_text(family = "Times",
+                            face = "bold",
+                            size =12),
+        panel.background = element_rect(fill = "white"),
+        legend.position = "bottom",
+        legend.title = element_text(size = 0),
+        axis.text.x = element_text(face = "bold", 
+                                   angle = 45, 
+                                   vjust = 0.5),
+        axis.line = element_line(color = "black", 
+                                 size = 0.2)) +
+  labs(y = "Number of publications", 
+       x = "Year") +
+  scale_y_continuous(breaks = seq(0,300, 
+                                  by = 50)) 
+figure_1a
+```
+
+```{r}
+figure_1b <- 
+  figure_1_data |> 
+  ggplot(aes(x = PY, y = total)) +
+  geom_line(stat = "identity", color = "red") +
+  geom_point(stat = "identity", color = "red") +
+  scale_x_continuous(breaks = seq(2000, 2021, by = 1)) +
+  geom_text(aes(label = total),
+            vjust = -0.3,
+            position = position_dodge(0.9),
+            size = 3,
+            family = "Times", 
+            color = "red") +
+  scale_fill_manual(values = c("springgreen3",
+                               "orange3")) +
+  theme(text = element_text(family = "Times",
+                            face = "bold",
+                            size =12),
+        panel.background = element_rect(fill = "white"),
+        legend.position = "bottom",
+        legend.title = element_text(size = 0),
+        axis.text.x = element_text(face = "bold", 
+                                   angle = 45, 
+                                   vjust = 0.5),
+        axis.line = element_line(color = "black", 
+                                 size = 0.2)) +
+  labs(y = "Number of total publications", 
+       x = "Year") +
+  scale_y_continuous(breaks = seq(0,300, 
+                                  by = 50)) 
+
+figure_1b
+```
+
+```{r}
+wos_scopus_total_annual_production_dummy |> 
+  ggplot(aes(x = PY)) +
+  geom_bar(stat = "identity",
+           aes(y = n_total)) +
+  geom_line(aes(y = total)) +
+  scale_y_continuous(
+    name = "First Axis",
+    sec.axis = sec_axis(~., name = "Second Axis"), 
+  )
+```
+
+```{r}
+TC_all <- 
+  TC_scopus |> 
+  left_join(TC_wos, 
+            by = "PY", 
+            suffix = c("_wos", 
+                       "_scopus")) |> 
+  replace_na(replace = list(TC_sum_scopus = 0)) |> 
+  mutate(TC_sum_all = TC_sum_wos + TC_sum_scopus,
+         TC_total = sum(TC_sum_all),
+         TC_percentage = round(TC_sum_all/TC_total, digits = 2)) |> 
+  select(PY, TC_sum_all, TC_percentage) |> 
+  filter(PY != 2022)
+
+figure_1c <- 
+  TC_all |> 
+  ggplot(aes(x = PY , y = TC_sum_all)) +
+  geom_line(stat = "identity", color = "purple") +
+  geom_point(color = "purple") +
+  scale_x_continuous(breaks = seq(2004, 2021, by = 1)) +
+  geom_text(aes(label = TC_sum_all),
+            vjust = -0.3,
+            position = position_dodge(0.9),
+            size = 3,
+            family = "Times", 
+            color = "purple") +
+  scale_fill_manual(values = c("springgreen3",
+                               "orange3")) +
+  theme(text = element_text(family = "Times",
+                            face = "bold",
+                            size =12),
+        panel.background = element_rect(fill = "white"),
+        legend.position = "bottom",
+        legend.title = element_text(size = 0),
+        axis.text.x = element_text(face = "bold", 
+                                   angle = 45, 
+                                   vjust = 0.5),
+        axis.line = element_line(color = "black", 
+                                 size = 0.2)) +
+  labs(y = "Number of citations", 
+       x = "Year") +
+  scale_y_continuous(breaks = seq(0,3500, 
+                                  by = 500)) 
+
+figure_1c
+```
+
+```{r}
+TC_all <- 
+  TC_scopus |> 
+  left_join(TC_wos, 
+            by = "PY", 
+            suffix = c("_wos", 
+                       "_scopus")) |> 
+  replace_na(replace = list(TC_sum_scopus = 0)) |> 
+  mutate(TC_sum_all = TC_sum_wos + TC_sum_scopus,
+         TC_total = sum(TC_sum_all),
+         TC_percentage = round(TC_sum_all/TC_total, digits = 2)) |> 
+  select(PY, TC_sum_all, TC_percentage) |> 
+  filter(PY >= 2000,
+         PY != 2022)
+
+figure_1c <- 
+  TC_all |> 
+  ggplot(aes(x = PY , y = TC_sum_all)) +
+  geom_line(stat = "identity", color = "purple") +
+  geom_point(color = "purple") +
+  scale_x_continuous(breaks = seq(2000, 2021, by = 1)) +
+  geom_text(aes(label = TC_sum_all),
+            vjust = -0.3,
+            position = position_dodge(0.9),
+            size = 3,
+            family = "Times", 
+            color = "purple") +
+  scale_fill_manual(values = c("springgreen3",
+                               "orange3")) +
+  theme(text = element_text(family = "Times",
+                            face = "bold",
+                            size =12),
+        panel.background = element_rect(fill = "white"),
+        legend.position = "bottom",
+        legend.title = element_text(size = 0),
+        axis.text.x = element_text(face = "bold", 
+                                   angle = 45, 
+                                   vjust = 0.5),
+        axis.line = element_line(color = "black", 
+                                 size = 0.2)) +
+  labs(y = "Number of citations", 
+       x = "Year") +
+  scale_y_continuous(breaks = seq(0,8500, 
+                                  by = 500)) 
+
+figure_1c
+```
+
